@@ -4,73 +4,57 @@ var cheerio = require('cheerio')
 var async = require('async')
 var fs = require('fs')
 
+//left off at getListingPages, gets listing page specific urls from each url supplied in opts
+
 class testIterator {
 	constructor() {
-		this.languages = {
-			'en': '-300',
-			'fr': '-301'
-		}
+		this.languages = ['en', 'fr']
 	}
 
 	test(opts) {
-		if (!opts.models || typeof(opts.models) !== 'object' || !opts.models.length) throw new Error('Must specify a list of models!')
-		if (!opts.url) {
-			if (!opts.brand || !(opts.brand.toLowerCase() == 'wp' || opts.brand.toLowerCase() == 'mt' || opts.brand.toLowerCase() == 'ka')) throw new Error('Must specify a brand! ka, mt, or wp.')
-			var prefix = opts.environment && opts.environment.toLowerCase() == 'dev' ? 'cuat' : 'www';
-			switch(opts.brand.toLowerCase()) {
-				case 'mt':
-					opts.url = `http://${prefix}.maytag.ca/webapp/wcs/stores/servlet/WHRORNAjaxCatalogSearchView?storeId=10229&catalogId=10579&beginIndex=0&skipCache=true`
-					break
-				case 'ka':
-					opts.url = `http://${prefix}.kitchenaid.ca/webapp/wcs/stores/servlet/WHRORNAjaxCatalogSearchView?storeId=10231&catalogId=10581&beginIndex=0&skipCache=true`
-					break
-				case 'wp':
-					opts.url = `http://${prefix}.whirlpool.ca/webapp/wcs/stores/servlet/WHRORNAjaxCatalogSearchView?storeId=10228&catalogId=10578&beginIndex=0&skipCache=true`
-					break
-			}
-			console.log(opts.url)
-		}
+		if (!opts.urls || typeof(opts.urls) !== 'object' || !opts.urls.length) throw new Error('Must specify a list of urls!')
 		this.opts = opts
 		var results = {}
 		var self = this
 
 		async.series([
 			function(cb1) {
-				//fetch each model's url
+				//fetch each url
 				var data = {}
 				var cnt = 0
 
-				async.each(opts.models, function(model, cb2) {
-					results[model] = {}
+				async.each(opts.urls, function(url, cb2) {
+					results[url] = {}
 					var completed = 0;
 
 					for (var i in self.languages) {
-						(function a(i) {
-							request(opts.url+'&searchTerm='+model+'&langId='+self.languages[i], function(error, response, body) {
-								console.log(opts.url+'&searchTerm='+model+'&langId='+self.languages[i])
-								var data = {}
+						var language = self.languages[i];
+						var regex = new RegExp("\/("+self.languages.join('|')+")_CA\/", "g")
+
+						url = url.replace(regex, "/"+language+"_CA/");
+						console.log(url);
+						(function a(url) {
+							request(url, function(error, response, body) {
+
 								if (!error && response.statusCode == 200) {
-									if (self.searchReturnedResults(self, body)) {
-										data.exists = true
-										data.url = self.getModelLink(self, body)
-									} else {
-										data.exists = false
-									}
+									results.url = self.getListingPageLinks(self, body)
 								}
 
-								if (!error) results[model][i] = data;
 								if (++completed == Object.keys(self.languages).length) {
 									cb2(error)
 								}
 							})
-						})(i)
+						})(url)
 					}
 
 				}, function(err) {
+
 					cb1(err)
 				})
 			},
 			function(cb1) {
+				cb1();
+				return;
 				async.forEachOf(results, function(outer, key, cb2) {
 					var completed = 0;
 					for (var language in results[key]) {
@@ -128,8 +112,22 @@ class testIterator {
 		])
 	}
 
+	getListingPageLinks(self, body) {
+		var $ = cheerio.load(body)
+		var links = $('a').attr('href')
+		console.log(links)
+		var regex = new RegExp("\/[0-9]{9}", "g")
+
+		for (var i = 0; i < links.length-1; i++) {
+			var link = links[i]
+			if (link.match(regex) == -1) links = links.splice(i,1), i--;
+		}
+		
+		return links
+	}
+
 	productDiscontinued(self, body) {
-		var $ = cheerio.load(body);
+		var $ = cheerio.load(body)
 		return $('.inactive-product-details').length > 0;
 	}
 
@@ -140,7 +138,6 @@ class testIterator {
 
 	searchReturnedResults(self, body) {
 		var $ = cheerio.load(body)
-		
 		switch(self.brand) {
 			case "ka":
 				return $('.product-link').length > 0
